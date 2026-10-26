@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #0b1018; color: #e8eef7; font-family: Arial, sans-serif; }
+button, input, textarea, select { font: inherit; }
+button { cursor: pointer; }
+.dot-grid { background-color: #111925; background-image: radial-gradient(#344154 1px, transparent 1px); background-size: 24px 24px; }
+.node-card { position: absolute; width: 220px; border: 1px solid #3c4b60; border-radius: 10px; background: #172131; box-shadow: 0 12px 30px #0005; }
+.node-card.selected { border-color: #42d4a3; box-shadow: 0 0 0 1px #42d4a3, 0 12px 30px #0006; }
+.handle { width: 10px; height: 10px; border-radius: 999px; background: #42d4a3; border: 2px solid #0b1018; position: absolute; top: 50%; }
+.handle.in { left: -6px; transform: translateY(-50%); }
+.handle.out { right: -6px; transform: translateY(-50%); }
+.edge { position: absolute; height: 2px; background: #6b7b92; transform-origin: left center; pointer-events: none; }

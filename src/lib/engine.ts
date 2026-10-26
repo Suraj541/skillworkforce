@@ -1,0 +1,93 @@
+import { randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { zipSync, strToU8 } from "fflate";
+import { getWorkflowForOwner, saveRun } from "./db";
+import { nodeCatalog } from "./node-catalog";
+import type { Run, Workflow } from "./types";
+
+const activeExecutions = new Map<string, number>();
+const maxLogs = () => Number(process.env.SKILLFORGE_MAX_LOGS ?? 100);
+const maxConcurrent = () => Number(process.env.SKILLFORGE_MAX_CONCURRENT_EXECUTIONS ?? 2);
+const maxGlobal = () => Number(process.env.SKILLFORGE_MAX_GLOBAL_EXECUTIONS ?? 4);
+const maxDurationMs = () => Number(process.env.SKILLFORGE_MAX_EXECUTION_MS ?? 30_000);
+
+export function validateWorkflow(workflow: Workflow) {
+  const errors: string[] = [];
+  if (!workflow.nodes.length) errors.push("Workflow must contain at least one node.");
+  const ids = new Set(workflow.nodes.map(n => n.id));
+  if (ids.size !== workflow.nodes.length) errors.push("Workflow node IDs must be unique.");
+  for (const node of workflow.nodes) {
+    if (!(node.type in nodeCatalog)) errors.push(`Node ${node.id} uses unsupported node type "${node.type}".`);
+  }
+  for (const edge of workflow.edges) {
+    if (!ids.has(edge.source) || !ids.has(edge.target)) errors.push(`Edge ${edge.id} references an unknown node.`);
+  }
+  const indegree = new Map(workflow.nodes.map(n => [n.id, 0]));
+  workflow.edges.forEach(edge => indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1));
+  const queue = workflow.nodes.filter(n => indegree.get(n.id) === 0).map(n => n.id);
+  const order: string[] = [];
+  let visited = 0;
+  while (queue.length) { const id = queue.shift()!; order.push(id); visited++; workflow.edges.filter(e => e.source === id).forEach(e => { const next = (indegree.get(e.target) ?? 0) - 1; indegree.set(e.target, next); if (next === 0) queue.push(e.target); }); }
+  if (visited !== workflow.nodes.length) errors.push("Workflow contains an unsupported cycle.");
+  return { valid: errors.length === 0, errors, order: errors.length === 0 ? order : [] };
+}
+
+export function runWorkflow(workflowId: string, ownerId: string): Run {
+  const userKey = `user:${ownerId}`;
+  const globalKey = "global";
+  const userCount = activeExecutions.get(userKey) ?? 0;
+  const globalCount = activeExecutions.get(globalKey) ?? 0;
+  if (userCount >= maxConcurrent() || globalCount >= maxGlobal()) throw new Error("EXECUTION_QUOTA_EXCEEDED");
+  activeExecutions.set(userKey, userCount + 1);
+  activeExecutions.set(globalKey, globalCount + 1);
+  try {
+    return runWorkflowInternal(workflowId, ownerId);
+  } finally {
+    activeExecutions.set(userKey, Math.max(0, (activeExecutions.get(userKey) ?? 1) - 1));
+    activeExecutions.set(globalKey, Math.max(0, (activeExecutions.get(globalKey) ?? 1) - 1));
+  }
+}
+
+function runWorkflowInternal(workflowId: string, ownerId: string): Run {
+  const workflow = getWorkflowForOwner(workflowId, ownerId);
+  if (!workflow) throw new Error("WORKFLOW_NOT_FOUND");
+  const validation = validateWorkflow(workflow);
+  const startedAt = new Date().toISOString();
+  const logs: Run["logs"] = [];
+  if (!validation.valid) {
+    const failed: Run = { id: randomUUID(), workflowId, status: "failed", startedAt, finishedAt: new Date().toISOString(), logs: [{ nodeId: "workflow", message: validation.errors.join(" "), status: "failed" }], error: "VALIDATION_ERROR" };
+    saveRun(failed); return failed;
+  }
+  const nodeById = new Map(workflow.nodes.map(node => [node.id, node]));
+  const executionOrder = validation.order.map(id => nodeById.get(id)!);
+  for (const node of executionOrder) {
+    if (Date.now() - Date.parse(startedAt) > maxDurationMs()) {
+      const timedOut: Run = { id: randomUUID(), workflowId, status: "failed", startedAt, finishedAt: new Date().toISOString(), logs: [...logs, { nodeId: "workflow", message: "Execution timed out before completion.", status: "failed" }], error: "EXECUTION_TIMEOUT" };
+      saveRun(timedOut); return timedOut;
+    }
+    if (node.type === "security.scan" && node.config.block === "true") {
+      const failed: Run = { id: randomUUID(), workflowId, status: "failed", startedAt, finishedAt: new Date().toISOString(), logs: [...logs, { nodeId: node.id, message: "Security gate blocked export.", status: "failed" }], error: "SECURITY_GATE_BLOCKED" };
+      saveRun(failed); return failed;
+    }
+    logs.push({ nodeId: node.id, message: `${node.title} completed and passed output to the next node.`, status: "success" });
+    if (logs.length >= maxLogs()) {
+      const limited: Run = { id: randomUUID(), workflowId, status: "failed", startedAt, finishedAt: new Date().toISOString(), logs, error: "EXECUTION_LOG_LIMIT" };
+      saveRun(limited); return limited;
+    }
+  }
+  const artifact = path.join("data", "artifacts", `${workflowId}-${Date.now()}.zip`);
+  mkdirSync(path.dirname(artifact), { recursive: true });
+  const archive = zipSync({
+    "SKILL.md": strToU8(`# Composed skill\n\nGenerated by workflow ${workflow.name}.\n\n## Provenance\n\nSource workflow version: ${workflow.version}\n`),
+    "manifest.json": strToU8(JSON.stringify({ workflowId, workflowVersion: workflow.version, generatedAt: new Date().toISOString() }, null, 2))
+  });
+  const maxArchiveBytes = Number(process.env.SKILLFORGE_MAX_ARCHIVE_BYTES ?? 1_000_000);
+  if (archive.byteLength > maxArchiveBytes) {
+    const limited: Run = { id: randomUUID(), workflowId, status: "failed", startedAt, finishedAt: new Date().toISOString(), logs, error: "ARCHIVE_SIZE_LIMIT" };
+    saveRun(limited); return limited;
+  }
+  writeFileSync(artifact, archive);
+  const run: Run = { id: randomUUID(), workflowId, status: "success", startedAt, finishedAt: new Date().toISOString(), logs, artifact };
+  saveRun(run); return run;
+}
