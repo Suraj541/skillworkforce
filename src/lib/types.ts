@@ -14,6 +14,7 @@ export type WorkflowEdge = { id: string; source: string; target: string };
 
 export type Workflow = {
   id: string;
+  ownerId: string | null;
   name: string;
   description: string;
   version: number;
@@ -21,6 +22,12 @@ export type Workflow = {
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
   updatedAt: string;
+};
+
+export type User = {
+  id: string;
+  email: string;
+  createdAt: string;
 };
 
 export type Run = {

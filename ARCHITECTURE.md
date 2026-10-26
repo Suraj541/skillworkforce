@@ -4,4 +4,12 @@ The app uses Next.js App Router with a client workflow editor and server route h
 
 The initial vertical slice intentionally keeps the graph JSON in a normalized workflow row and stores runs separately. This is reversible: node/edge tables can be added later without changing route contracts. External content is not executed; the current engine only transforms configured text and writes a fixed-entry ZIP artifact.
 
-The local MVP has no identity or authorization layer. Development and production scripts bind to loopback to reduce accidental exposure; shared deployment requires authentication, ownership checks, and CSRF protection before it is safe.
+Development and production scripts bind to loopback to reduce accidental exposure. Application-level identity, ownership checks, and CSRF protection are now present, but shared deployment still requires operational hardening.
+
+## Identity and authorization
+
+Users are stored in SQLite with scrypt password hashes. Login creates a random opaque session token; only its SHA-256 hash is stored in `sessions`. The session is HttpOnly, SameSite=Lax, Secure in production, and expires after eight hours. A separate readable CSRF cookie is bound to the session by hash and must be echoed in `x-csrf-token`.
+
+Every workflow has an `owner_id`; list/read/update/delete/validate/run operations query through the authenticated owner. Runs inherit authorization through their parent workflow. Existing rows from the pre-auth schema are migrated with `owner_id = NULL`, preserved, and denied to all users until an explicit future claim flow exists; no account is silently assigned.
+
+State-changing requests require the exact `SKILLFORGE_APP_ORIGIN` (default `http://127.0.0.1:3000`) and the CSRF double-submit check. This is a cookie-session threat model; CORS is not used as the CSRF defense.

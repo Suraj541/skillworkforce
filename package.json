@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test",
     "db:init": "node scripts/db-init.mjs",
-    "db:seed": "node scripts/seed.mjs"
+    "db:seed": "node scripts/seed.mjs",
+    "auth:bootstrap": "tsx scripts/bootstrap-user.ts"
   },
   "dependencies": {
     "@xyflow/react": "^12.8.6",

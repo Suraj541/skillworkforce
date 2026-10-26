@@ -15,23 +15,51 @@ let runWorkflow: typeof import("./engine").runWorkflow;
 let validateWorkflow: typeof import("./engine").validateWorkflow;
 let defaultWorkflow: typeof import("./node-catalog").defaultWorkflow;
 let createWorkflow: typeof import("../app/api/workflows/route").POST;
+const ownerId = "test-owner";
+let createUser: typeof import("./db").createUser;
+let createSession: typeof import("./auth").createSession;
+let hashPassword: typeof import("./auth").hashPassword;
+let listWorkflows: typeof import("./db").listWorkflows;
+let getWorkflowForOwner: typeof import("./db").getWorkflowForOwner;
+let createWorkflowRoute: typeof import("../app/api/workflows/route").POST;
+let listWorkflowsRoute: typeof import("../app/api/workflows/route").GET;
+let readWorkflowRoute: typeof import("../app/api/workflows/[id]/route").GET;
+let updateWorkflowRoute: typeof import("../app/api/workflows/[id]/route").PATCH;
+let deleteWorkflowRoute: typeof import("../app/api/workflows/[id]/route").DELETE;
+let runRoute: typeof import("../app/api/workflows/[id]/runs/route").POST;
+let readRunRoute: typeof import("../app/api/runs/[runId]/route").GET;
+let loginRoute: typeof import("../app/api/auth/login/route").POST;
+let meRoute: typeof import("../app/api/auth/me/route").GET;
+let logoutRoute: typeof import("../app/api/auth/logout/route").POST;
 
 function workflow(overrides: Partial<typeof defaultWorkflow> = {}) {
-  return { id: crypto.randomUUID(), ...defaultWorkflow, ...overrides, version: 1, status: "draft" as const, updatedAt: new Date().toISOString() };
+  return { id: crypto.randomUUID(), ownerId, ...defaultWorkflow, ...overrides, version: 1, status: "draft" as const, updatedAt: new Date().toISOString() };
 }
 
 test.before(async () => {
   ({ db, saveWorkflow } = await import("./db"));
   ({ runWorkflow, validateWorkflow } = await import("./engine"));
   ({ defaultWorkflow } = await import("./node-catalog"));
-  ({ POST: createWorkflow } = await import("../app/api/workflows/route"));
+  ({ POST: createWorkflow, GET: listWorkflowsRoute } = await import("../app/api/workflows/route"));
+  createWorkflowRoute = createWorkflow;
+  ({ GET: readWorkflowRoute, PATCH: updateWorkflowRoute, DELETE: deleteWorkflowRoute } = await import("../app/api/workflows/[id]/route"));
+  ({ POST: runRoute } = await import("../app/api/workflows/[id]/runs/route"));
+  ({ GET: readRunRoute } = await import("../app/api/runs/[runId]/route"));
+  ({ POST: loginRoute } = await import("../app/api/auth/login/route"));
+  ({ GET: meRoute } = await import("../app/api/auth/me/route"));
+  ({ POST: logoutRoute } = await import("../app/api/auth/logout/route"));
+  ({ createUser } = await import("./db"));
+  ({ createSession, hashPassword } = await import("./auth"));
+  ({ listWorkflows, getWorkflowForOwner } = await import("./db"));
+  createUser({ id: "user-a", email: "a@example.test", createdAt: new Date().toISOString() }, hashPassword("correct horse battery staple"));
+  createUser({ id: "user-b", email: "b@example.test", createdAt: new Date().toISOString() }, hashPassword("correct horse battery staple"));
 });
 test.after(() => rmSync(path.dirname(databasePath), { recursive: true, force: true }));
 
 test("valid workflow executes in topological order and creates a readable ZIP", () => {
   const saved = workflow();
   saveWorkflow(saved);
-  const run = runWorkflow(saved.id);
+  const run = runWorkflow(saved.id, ownerId);
   assert.equal(run.status, "success");
   assert.deepEqual(run.logs.map(log => log.nodeId), ["source", "compose", "validate", "scan", "export"]);
   const archive = unzipSync(readFileSync(run.artifact!));
@@ -50,16 +78,87 @@ test("validation rejects duplicate nodes, broken edges, cycles, and unsupported 
 test("security gate fails the run and does not create an artifact", () => {
   const saved = workflow({ nodes: defaultWorkflow.nodes.map(node => node.id === "scan" ? { ...node, config: { block: "true" } } : node) });
   saveWorkflow(saved);
-  const run = runWorkflow(saved.id);
+  const run = runWorkflow(saved.id, ownerId);
   assert.equal(run.status, "failed");
   assert.equal(run.error, "SECURITY_GATE_BLOCKED");
   assert.equal(run.artifact, undefined);
 });
 
 test("create route rejects malformed JSON with a stable error envelope", async () => {
-  const response = await createWorkflow(new Request("http://localhost/api/workflows", { method: "POST", body: "{", headers: { "content-type": "application/json" } }));
+  const session = createSession({ id: "user-a", email: "a@example.test", createdAt: new Date().toISOString() });
+  const response = (await createWorkflow!(new Request("http://localhost/api/workflows", { method: "POST", body: "{", headers: { "content-type": "application/json", origin: "http://127.0.0.1:3000", cookie: `skillforge_session=${session.session}; skillforge_csrf=${session.csrf}`, "x-csrf-token": session.csrf } })))!;
   assert.equal(response.status, 400);
   assert.deepEqual((await response.json()).error.code, "INVALID_JSON");
+});
+
+test("workflow and run routes enforce authentication, ownership, and CSRF", async () => {
+  const unauthenticated = (await listWorkflowsRoute!(new Request("http://127.0.0.1:3000/api/workflows")))!;
+  assert.equal(unauthenticated.status, 401);
+  const a = createSession({ id: "user-a", email: "a@example.test", createdAt: new Date().toISOString() });
+  const b = createSession({ id: "user-b", email: "b@example.test", createdAt: new Date().toISOString() });
+  const headers = { origin: "http://127.0.0.1:3000", cookie: `skillforge_session=${a.session}; skillforge_csrf=${a.csrf}`, "x-csrf-token": a.csrf, "content-type": "application/json" };
+  const created = (await createWorkflowRoute!(new Request("http://127.0.0.1:3000/api/workflows", { method: "POST", headers, body: JSON.stringify({ name: "Owned workflow" }) })))!;
+  assert.equal(created.status, 201);
+  const workflowId = (await created.json()).data.id as string;
+  const otherHeaders = { origin: "http://127.0.0.1:3000", cookie: `skillforge_session=${b.session}; skillforge_csrf=${b.csrf}`, "x-csrf-token": b.csrf };
+  assert.equal((await readWorkflowRoute!(new Request("http://127.0.0.1:3000", { headers: otherHeaders }), { params: Promise.resolve({ id: workflowId }) }))!.status, 404);
+  assert.equal((await updateWorkflowRoute!(new Request("http://127.0.0.1:3000", { method: "PATCH", headers: { ...otherHeaders, "content-type": "application/json" }, body: JSON.stringify({ name: "hijacked" }) }), { params: Promise.resolve({ id: workflowId }) }))!.status, 404);
+  assert.equal((await deleteWorkflowRoute!(new Request("http://127.0.0.1:3000", { method: "DELETE", headers: otherHeaders }), { params: Promise.resolve({ id: workflowId }) }))!.status, 404);
+  assert.equal((await runRoute!(new Request("http://127.0.0.1:3000", { method: "POST", headers: otherHeaders }), { params: Promise.resolve({ id: workflowId }) }))!.status, 404);
+  assert.equal((await createWorkflowRoute!(new Request("http://127.0.0.1:3000/api/workflows", { method: "POST", headers: { ...headers, "x-csrf-token": "wrong" }, body: "{}" })))!.status, 403);
+  const run = (await runRoute!(new Request("http://127.0.0.1:3000", { method: "POST", headers }), { params: Promise.resolve({ id: workflowId }) }))!;
+  assert.equal(run.status, 201);
+  const runId = (await run.json()).data.id as string;
+  assert.equal((await readRunRoute!(new Request("http://127.0.0.1:3000", { headers: otherHeaders }), { params: Promise.resolve({ runId }) }))!.status, 404);
+  assert.equal(getWorkflowForOwner(workflowId, "user-a")?.ownerId, "user-a");
+  assert.equal(listWorkflows("user-b").length, 0);
+});
+
+test("login creates a session, rejects cross-origin requests, and expired sessions are denied", async () => {
+  const crossOrigin = (await loginRoute!(new Request("http://127.0.0.1:3000/api/auth/login", { method: "POST", headers: { origin: "https://evil.example", "content-type": "application/json" }, body: JSON.stringify({ email: "a@example.test", password: "correct horse battery staple" }) })))!;
+  assert.equal(crossOrigin.status, 403);
+  const response = (await loginRoute!(new Request("http://127.0.0.1:3000/api/auth/login", { method: "POST", headers: { origin: "http://127.0.0.1:3000", "content-type": "application/json" }, body: JSON.stringify({ email: "a@example.test", password: "correct horse battery staple" }) })))!;
+  assert.equal(response.status, 200);
+  const cookie = response.headers.get("set-cookie")!;
+  assert.match(cookie, /skillforge_session=/);
+  const sessionToken = cookie.match(/skillforge_session=([^;]+)/)![1];
+  assert.equal((await meRoute!(new Request("http://127.0.0.1:3000/api/auth/me", { headers: { cookie: `skillforge_session=${sessionToken}` } })))!.status, 200);
+  db.prepare("UPDATE sessions SET expires_at=? WHERE id_hash=(SELECT id_hash FROM sessions ORDER BY created_at DESC LIMIT 1)").run(new Date(Date.now() - 1_000).toISOString());
+  assert.equal((await meRoute!(new Request("http://127.0.0.1:3000/api/auth/me", { headers: { cookie: `skillforge_session=${sessionToken}` } })))!.status, 401);
+});
+
+test("logout invalidates a valid session", async () => {
+  const session = createSession({ id: "user-a", email: "a@example.test", createdAt: new Date().toISOString() });
+  const cookie = `skillforge_session=${session.session}; skillforge_csrf=${session.csrf}`;
+  const response = (await logoutRoute!(new Request("http://127.0.0.1:3000/api/auth/logout", { method: "POST", headers: { origin: "http://127.0.0.1:3000", cookie, "x-csrf-token": session.csrf } })))!;
+  assert.equal(response.status, 200);
+  assert.equal((await meRoute!(new Request("http://127.0.0.1:3000/api/auth/me", { headers: { cookie } })))!.status, 401);
+});
+
+test("legacy migration preserves workflows and runs without assigning ownership", () => {
+  const legacyDir = mkdtempSync(path.join(tmpdir(), "skillforge-legacy-"));
+  const legacyPath = path.join(legacyDir, "legacy.db");
+  const env = { ...process.env, LEGACY: legacyPath, SKILLFORGE_DB_PATH: legacyPath };
+  execFileSync(process.execPath, ["--input-type=module", "-e", `
+    import { DatabaseSync } from "node:sqlite";
+    const db = new DatabaseSync(process.env.LEGACY);
+    db.exec(\`CREATE TABLE workflows (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, version INTEGER NOT NULL, status TEXT NOT NULL, graph_json TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE runs (id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT, logs_json TEXT NOT NULL, artifact TEXT, error TEXT);
+    INSERT INTO workflows VALUES ('legacy-wf','Legacy','Preserve',1,'draft','{"nodes":[],"edges":[]}', '2026-01-01T00:00:00Z');
+    INSERT INTO runs VALUES ('legacy-run','legacy-wf','success','2026-01-01T00:00:00Z','2026-01-01T00:00:01Z','[]',NULL,NULL);\`);
+  `], { env, stdio: "ignore" });
+  execFileSync(process.execPath, ["scripts/db-init.mjs"], { env, stdio: "ignore" });
+  const result = execFileSync(process.execPath, ["--input-type=module", "-e", `
+    import { DatabaseSync } from "node:sqlite";
+    const db = new DatabaseSync(process.env.LEGACY);
+    const workflow = db.prepare("SELECT id, owner_id FROM workflows WHERE id='legacy-wf'").get();
+    const run = db.prepare("SELECT id FROM runs WHERE id='legacy-run'").get();
+    const migration = db.prepare("SELECT version FROM schema_migrations WHERE version=1").get();
+    if (!workflow || workflow.owner_id !== null || !run || !migration) process.exit(1);
+    console.log("preserved");
+  `], { env });
+  assert.match(result.toString(), /preserved/);
+  rmSync(legacyDir, { recursive: true, force: true });
 });
 
 test("seed is idempotent", () => {

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { zipSync, strToU8 } from "fflate";
-import { getWorkflow, saveRun } from "./db";
+import { getWorkflowForOwner, saveRun } from "./db";
 import { nodeCatalog } from "./node-catalog";
 import type { Run, Workflow } from "./types";
 
@@ -27,8 +27,8 @@ export function validateWorkflow(workflow: Workflow) {
   return { valid: errors.length === 0, errors, order: errors.length === 0 ? order : [] };
 }
 
-export function runWorkflow(workflowId: string): Run {
-  const workflow = getWorkflow(workflowId);
+export function runWorkflow(workflowId: string, ownerId: string): Run {
+  const workflow = getWorkflowForOwner(workflowId, ownerId);
   if (!workflow) throw new Error("WORKFLOW_NOT_FOUND");
   const validation = validateWorkflow(workflow);
   const startedAt = new Date().toISOString();

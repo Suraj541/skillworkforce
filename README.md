@@ -11,7 +11,15 @@ npm run db:seed
 npm run dev
 ```
 
-Open `http://localhost:3000/workflows`.
+Create the first local account, then open `http://127.0.0.1:3000/login`:
+
+```bash
+SKILLFORGE_BOOTSTRAP_EMAIL=owner@example.test \
+SKILLFORGE_BOOTSTRAP_PASSWORD='use-a-unique-12-character-secret' \
+npm run auth:bootstrap
+```
+
+Open `http://127.0.0.1:3000/login`.
 
 ## Release checks
 
@@ -22,7 +30,7 @@ npm test
 npm run build
 ```
 
-The database is created at `data/skillforge.db` by default. Override it with `SKILLFORGE_DB_PATH`. Development and production start scripts bind to `127.0.0.1` because authentication and authorization are not implemented. Do not expose this MVP to a shared network or use destructive reset commands against production data.
+The database is created at `data/skillforge.db` by default. Override it with `SKILLFORGE_DB_PATH`. Development and production start scripts bind to `127.0.0.1`. Set `SKILLFORGE_APP_ORIGIN` when using a different trusted origin. Do not expose this MVP to a shared network or use destructive reset commands against production data.
 
 ## Evidence boundary
 
