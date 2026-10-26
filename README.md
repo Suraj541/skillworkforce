@@ -32,6 +32,8 @@ npm run build
 
 The database is created at `data/skillforge.db` by default. Override it with `SKILLFORGE_DB_PATH`. Development and production start scripts bind to `127.0.0.1`. Set `SKILLFORGE_APP_ORIGIN` when using a different trusted origin. Do not expose this MVP to a shared network or use destructive reset commands against production data.
 
+The dependency tree pins the transitive PostCSS remediation through an npm override to `8.5.31` while retaining Next `15.5.28`. Run `npm audit --omit=dev` to verify the production audit.
+
 ## Evidence boundary
 
 The workflow vertical slice is implemented and browser-verified. Skill import/library UX, discovery, projects, provider adapters, authentication, cancellation, and expanded SOP appendix templates are explicitly deferred; see `IMPLEMENTATION_STATUS.md`.

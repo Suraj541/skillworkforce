@@ -27,6 +27,19 @@ This review covered the local Next.js route handlers, workflow engine, SQLite pe
 
 ## Remaining risks
 
-Dependency audit still reports one high and one moderate transitive PostCSS/Next advisory. The available fix is a breaking Next upgrade and was not applied without a compatibility review. Resource limits are bounded for graph and field sizes, but rate limiting and execution quotas remain future deployment work.
+Resource limits are bounded for graph and field sizes, but rate limiting and execution quotas remain future deployment work.
 
 Legacy workflows created before this change retain their data with `owner_id = NULL` and are intentionally inaccessible until an explicit claim/migration operation is designed.
+
+## Dependency advisory remediation
+
+Before remediation, `next@15.5.28` installed `postcss@8.4.31` through `next -> postcss`. `npm audit --omit=dev` reported:
+
+- `GHSA-qx2v-qp2m-jg93` — PostCSS XSS, fixed in `8.5.10`.
+- `GHSA-6g55-p6wh-862q` — arbitrary source-map file read, fixed after `8.5.11`.
+- `GHSA-fxqj-rqcc-2cmp` — incomplete source-map fix, affected through `8.5.22`.
+- `GHSA-r28c-9q8g-f849` — source-map path traversal, affected through `8.5.17`.
+
+The smallest compatible fix is the npm override `"postcss": "8.5.31"`. It preserves Next `15.5.28`, installs `postcss@8.5.31` in the actual dependency tree, and covers all four affected ranges. `npm audit --omit=dev --audit-level=high` and `npm audit --omit=dev` both report zero vulnerabilities after the override. No Next major upgrade was required.
+
+The advisories concern PostCSS source-map processing of attacker-controlled CSS. This application does not process user-controlled CSS; its runtime inputs are JSON workflow data, and PostCSS is used by the build toolchain. The dependency remains patched regardless of that conditional reachability assessment.

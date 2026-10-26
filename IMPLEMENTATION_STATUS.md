@@ -14,6 +14,7 @@
 | Browser verification | verified | Playwright completed login, loaded the owner-scoped workflow, ran it, and displayed persisted SUCCESS logs/artifact |
 | Nine core SOP seed skills | implemented | idempotent `scripts/seed.mjs` |
 | 26 total SOP templates | not implemented | expanded appendix source documents are not present in repository |
+| Production dependency audit | implemented | PostCSS override to 8.5.31; both production audit commands report zero vulnerabilities |
 
 ## Audit findings
 
