@@ -36,6 +36,7 @@ let logoutRoute: typeof import("../app/api/auth/logout/route").POST;
 let listUnownedWorkflowIds: typeof import("./ownership-recovery").listUnownedWorkflowIds;
 let previewLegacyRecovery: typeof import("./ownership-recovery").previewLegacyRecovery;
 let reassignLegacyWorkflows: typeof import("./ownership-recovery").reassignLegacyWorkflows;
+let clearRateLimitsForTests: typeof import("./rate-limit").clearRateLimitsForTests;
 
 function workflow(overrides: Partial<typeof defaultWorkflow> = {}) {
   return { id: crypto.randomUUID(), ownerId, ...defaultWorkflow, ...overrides, version: 1, status: "draft" as const, updatedAt: new Date().toISOString() };
@@ -57,6 +58,7 @@ test.before(async () => {
   ({ createSession, hashPassword } = await import("./auth"));
   ({ listWorkflows, getWorkflowForOwner, getRunForOwner, saveRun } = await import("./db"));
   ({ listUnownedWorkflowIds, previewLegacyRecovery, reassignLegacyWorkflows } = await import("./ownership-recovery"));
+  ({ clearRateLimitsForTests } = await import("./rate-limit"));
   createUser({ id: "user-a", email: "a@example.test", createdAt: new Date().toISOString() }, hashPassword("correct horse battery staple"));
   createUser({ id: "user-b", email: "b@example.test", createdAt: new Date().toISOString() }, hashPassword("correct horse battery staple"));
 });
@@ -133,6 +135,25 @@ test("login creates a session, rejects cross-origin requests, and expired sessio
   assert.equal((await meRoute!(new Request("http://127.0.0.1:3000/api/auth/me", { headers: { cookie: `skillforge_session=${sessionToken}` } })))!.status, 401);
 });
 
+test("login rate limits bursts and resets after expiry without trusting spoofed forwarding headers", async () => {
+  process.env.SKILLFORGE_RATE_LIMIT = "2";
+  process.env.SKILLFORGE_RATE_WINDOW_MS = "25";
+  clearRateLimitsForTests();
+  const headers = { origin: "http://127.0.0.1:3000", "content-type": "application/json", "x-forwarded-for": "1.2.3.4" };
+  for (let index = 0; index < 2; index++) {
+    const response = await loginRoute!(new Request("http://127.0.0.1:3000/api/auth/login", { method: "POST", headers, body: JSON.stringify({ email: `rate-${index}@example.test`, password: "wrong-password" }) }));
+    assert.equal(response.status, 401);
+  }
+  const limited = await loginRoute!(new Request("http://127.0.0.1:3000/api/auth/login", { method: "POST", headers, body: JSON.stringify({ email: "rate-2@example.test", password: "wrong-password" }) }));
+  assert.equal(limited.status, 429);
+  await new Promise(resolve => setTimeout(resolve, 35));
+  const reset = await loginRoute!(new Request("http://127.0.0.1:3000/api/auth/login", { method: "POST", headers, body: JSON.stringify({ email: "rate-reset@example.test", password: "wrong-password" }) }));
+  assert.equal(reset.status, 401);
+  delete process.env.SKILLFORGE_RATE_LIMIT;
+  delete process.env.SKILLFORGE_RATE_WINDOW_MS;
+  clearRateLimitsForTests();
+});
+
 test("logout invalidates a valid session", async () => {
   const session = createSession({ id: "user-a", email: "a@example.test", createdAt: new Date().toISOString() });
   const cookie = `skillforge_session=${session.session}; skillforge_csrf=${session.csrf}`;
@@ -191,6 +212,25 @@ test("legacy ownership recovery previews, reassigns atomically, and audits witho
   assert.deepEqual(reassignLegacyWorkflows(preview, true), { changed: false, alreadyApplied: true });
   assert.throws(() => previewLegacyRecovery("operator@example.test", [first.id, owned.id], "a@example.test", "Support ticket REC-2"), /Owned workflows/);
   assert.equal(getWorkflowForOwner(owned.id, "user-b")?.ownerId, "user-b");
+});
+
+test("execution timeout is persisted as a failed run", () => {
+  process.env.SKILLFORGE_MAX_EXECUTION_MS = "-1";
+  const saved = workflow({ name: "Timeout workflow" });
+  saveWorkflow(saved);
+  const run = runWorkflow(saved.id, ownerId);
+  assert.equal(run.status, "failed");
+  assert.equal(run.error, "EXECUTION_TIMEOUT");
+  delete process.env.SKILLFORGE_MAX_EXECUTION_MS;
+});
+
+test("execution concurrency quota rejects new work without creating a run", () => {
+  process.env.SKILLFORGE_MAX_CONCURRENT_EXECUTIONS = "0";
+  const saved = workflow({ name: "Quota workflow" });
+  saveWorkflow(saved);
+  assert.throws(() => runWorkflow(saved.id, ownerId), /EXECUTION_QUOTA_EXCEEDED/);
+  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM runs WHERE workflow_id=?").get(saved.id) as { count: number }).count, 0);
+  delete process.env.SKILLFORGE_MAX_CONCURRENT_EXECUTIONS;
 });
 
 test("seed is idempotent", () => {

@@ -5,12 +5,14 @@
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1",
     "build": "next build",
-    "start": "next start --hostname 127.0.0.1",
+    "start": "node scripts/check-production-config.mjs && next start --hostname 127.0.0.1",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test",
     "db:init": "node scripts/db-init.mjs",
     "db:seed": "node scripts/seed.mjs",
+    "db:backup": "node scripts/backup-db.mjs",
+    "db:restore": "node scripts/restore-db.mjs",
     "auth:bootstrap": "tsx scripts/bootstrap-user.ts",
     "ownership:recover": "tsx scripts/recover-legacy-workflows.ts"
   },

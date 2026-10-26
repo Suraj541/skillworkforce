@@ -17,6 +17,8 @@
 
 All workflow/run routes require a valid session cookie. State-changing cookie-authenticated requests additionally require an exact configured `Origin` and a matching `skillforge_csrf` cookie plus `x-csrf-token` header. Responses use `{ data }` on success and `{ error: { code, message, details? } }` for route errors.
 
+Login, workflow creation, validation, and execution may return `429 RATE_LIMITED` with a `Retry-After` header. Limits are process-local and are not a substitute for a deployment-wide gateway policy.
+
 The local bootstrap command creates the first user; there is no public registration route:
 
 ```bash
