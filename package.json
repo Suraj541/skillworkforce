@@ -11,7 +11,8 @@
     "test": "tsx --test",
     "db:init": "node scripts/db-init.mjs",
     "db:seed": "node scripts/seed.mjs",
-    "auth:bootstrap": "tsx scripts/bootstrap-user.ts"
+    "auth:bootstrap": "tsx scripts/bootstrap-user.ts",
+    "ownership:recover": "tsx scripts/recover-legacy-workflows.ts"
   },
   "dependencies": {
     "@xyflow/react": "^12.8.6",

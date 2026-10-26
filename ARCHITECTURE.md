@@ -13,3 +13,7 @@ Users are stored in SQLite with scrypt password hashes. Login creates a random o
 Every workflow has an `owner_id`; list/read/update/delete/validate/run operations query through the authenticated owner. Runs inherit authorization through their parent workflow. Existing rows from the pre-auth schema are migrated with `owner_id = NULL`, preserved, and denied to all users until an explicit future claim flow exists; no account is silently assigned.
 
 State-changing requests require the exact `SKILLFORGE_APP_ORIGIN` (default `http://127.0.0.1:3000`) and the CSRF double-submit check. This is a cookie-session threat model; CORS is not used as the CSRF defense.
+
+## Legacy ownership recovery
+
+There is no public recovery API and no administrator role in the local MVP. An operator with access to the database host may use `npm run ownership:recover` to list ownerless workflow IDs, preview a specific reassignment, and apply it only with `--confirm`. The command requires an existing destination user, explicit IDs, an operator identity, and a reason. It rechecks that every selected workflow is still ownerless inside a `BEGIN IMMEDIATE` transaction, preserves all related runs and logs, and writes one `ownership_recovery_audit` event keyed for safe retries. Audit records contain IDs and ownership metadata only, never passwords, sessions, or graph content.

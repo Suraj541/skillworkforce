@@ -34,11 +34,21 @@ db.exec(`
     id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL,
     content TEXT NOT NULL, source TEXT NOT NULL, version INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS ownership_recovery_audit (
+    operation_key TEXT PRIMARY KEY,
+    actor TEXT NOT NULL,
+    workflow_ids_json TEXT NOT NULL,
+    previous_owners_json TEXT NOT NULL,
+    new_owner_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
 `);
 const workflowColumns = db.prepare("PRAGMA table_info(workflows)").all() as Array<{ name: string }>;
 if (!workflowColumns.some(column => column.name === "owner_id")) db.exec("ALTER TABLE workflows ADD COLUMN owner_id TEXT");
 db.exec("CREATE INDEX IF NOT EXISTS idx_workflows_owner ON workflows(owner_id); CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);");
 db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (1, ?)").run(new Date().toISOString());
+db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (2, ?)").run(new Date().toISOString());
 
 export function listWorkflows(ownerId?: string): Workflow[] {
   const rows = ownerId ? db.prepare("SELECT * FROM workflows WHERE owner_id=? ORDER BY updated_at DESC").all(ownerId) : db.prepare("SELECT * FROM workflows ORDER BY updated_at DESC").all();

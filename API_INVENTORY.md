@@ -24,3 +24,5 @@ SKILLFORGE_BOOTSTRAP_EMAIL=owner@example.test \
 SKILLFORGE_BOOTSTRAP_PASSWORD='use-a-unique-12-character-secret' \
 npm run auth:bootstrap
 ```
+
+Legacy ownership recovery is intentionally not exposed as an API. The operator-only `npm run ownership:recover` CLI is documented in `README.md` and `SECURITY-REVIEW.md`.

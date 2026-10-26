@@ -21,6 +21,28 @@ npm run auth:bootstrap
 
 Open `http://127.0.0.1:3000/login`.
 
+### Recovering legacy workflow ownership
+
+Legacy workflows have `owner_id = NULL` and are hidden from ordinary users. Back up the SQLite file before recovery, then list candidates:
+
+```bash
+npm run ownership:recover -- --list
+```
+
+Preview a specific reassignment without changing data:
+
+```bash
+npm run ownership:recover -- --operator ops@example.test --to-user user@example.test --reason "Support ticket REC-1" --workflow <workflow-id> --dry-run
+```
+
+Apply the same explicit selection only after reviewing the preview:
+
+```bash
+npm run ownership:recover -- --operator ops@example.test --to-user user@example.test --reason "Support ticket REC-1" --workflow <workflow-id> --confirm
+```
+
+This is an operator-only CLI, not a user-facing API. It requires an existing destination user, preserves related runs and logs, uses a transaction, and records an audit event without passwords, sessions, or workflow content. Records whose historical owner cannot be established remain unassigned until an explicit operator decision.
+
 ## Release checks
 
 ```bash
@@ -36,4 +58,4 @@ The dependency tree pins the transitive PostCSS remediation through an npm overr
 
 ## Evidence boundary
 
-The workflow vertical slice is implemented and browser-verified. Skill import/library UX, discovery, projects, provider adapters, authentication, cancellation, and expanded SOP appendix templates are explicitly deferred; see `IMPLEMENTATION_STATUS.md`.
+The workflow vertical slice, authentication, ownership authorization, CSRF protection, and legacy ownership recovery CLI are implemented and browser-verified where applicable. Skill import/library UX, discovery, projects, provider adapters, cancellation, and expanded SOP appendix templates are explicitly deferred; see `IMPLEMENTATION_STATUS.md`.

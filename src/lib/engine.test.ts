@@ -21,6 +21,8 @@ let createSession: typeof import("./auth").createSession;
 let hashPassword: typeof import("./auth").hashPassword;
 let listWorkflows: typeof import("./db").listWorkflows;
 let getWorkflowForOwner: typeof import("./db").getWorkflowForOwner;
+let getRunForOwner: typeof import("./db").getRunForOwner;
+let saveRun: typeof import("./db").saveRun;
 let createWorkflowRoute: typeof import("../app/api/workflows/route").POST;
 let listWorkflowsRoute: typeof import("../app/api/workflows/route").GET;
 let readWorkflowRoute: typeof import("../app/api/workflows/[id]/route").GET;
@@ -31,6 +33,9 @@ let readRunRoute: typeof import("../app/api/runs/[runId]/route").GET;
 let loginRoute: typeof import("../app/api/auth/login/route").POST;
 let meRoute: typeof import("../app/api/auth/me/route").GET;
 let logoutRoute: typeof import("../app/api/auth/logout/route").POST;
+let listUnownedWorkflowIds: typeof import("./ownership-recovery").listUnownedWorkflowIds;
+let previewLegacyRecovery: typeof import("./ownership-recovery").previewLegacyRecovery;
+let reassignLegacyWorkflows: typeof import("./ownership-recovery").reassignLegacyWorkflows;
 
 function workflow(overrides: Partial<typeof defaultWorkflow> = {}) {
   return { id: crypto.randomUUID(), ownerId, ...defaultWorkflow, ...overrides, version: 1, status: "draft" as const, updatedAt: new Date().toISOString() };
@@ -50,7 +55,8 @@ test.before(async () => {
   ({ POST: logoutRoute } = await import("../app/api/auth/logout/route"));
   ({ createUser } = await import("./db"));
   ({ createSession, hashPassword } = await import("./auth"));
-  ({ listWorkflows, getWorkflowForOwner } = await import("./db"));
+  ({ listWorkflows, getWorkflowForOwner, getRunForOwner, saveRun } = await import("./db"));
+  ({ listUnownedWorkflowIds, previewLegacyRecovery, reassignLegacyWorkflows } = await import("./ownership-recovery"));
   createUser({ id: "user-a", email: "a@example.test", createdAt: new Date().toISOString() }, hashPassword("correct horse battery staple"));
   createUser({ id: "user-b", email: "b@example.test", createdAt: new Date().toISOString() }, hashPassword("correct horse battery staple"));
 });
@@ -159,6 +165,32 @@ test("legacy migration preserves workflows and runs without assigning ownership"
   `], { env });
   assert.match(result.toString(), /preserved/);
   rmSync(legacyDir, { recursive: true, force: true });
+});
+
+test("legacy ownership recovery previews, reassigns atomically, and audits without exposing content", () => {
+  const first = { ...workflow({ name: "Legacy one" }), id: "legacy-recovery-1", ownerId: null };
+  const second = { ...workflow({ name: "Legacy two" }), id: "legacy-recovery-2", ownerId: null };
+  const owned = { ...workflow(), id: "already-owned", ownerId: "user-b" };
+  saveWorkflow(first);
+  saveWorkflow(second);
+  saveWorkflow(owned);
+  saveRun({ id: "legacy-recovery-run", workflowId: first.id, status: "success", startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), logs: [] });
+  const preview = previewLegacyRecovery("operator@example.test", [first.id, second.id], "a@example.test", "Support ticket REC-1");
+  assert.equal(preview.alreadyApplied, false);
+  assert.deepEqual(listUnownedWorkflowIds().filter(id => id.startsWith("legacy-recovery-")).sort(), [first.id, second.id].sort());
+  assert.equal(getWorkflowForOwner(first.id, "user-a"), undefined);
+  assert.throws(() => reassignLegacyWorkflows(preview, false), /confirmation is required/);
+  assert.equal(getWorkflowForOwner(first.id, "user-a"), undefined);
+  assert.deepEqual(reassignLegacyWorkflows(preview, true), { changed: true, alreadyApplied: false });
+  assert.equal(getWorkflowForOwner(first.id, "user-a")?.ownerId, "user-a");
+  assert.equal(getWorkflowForOwner(second.id, "user-a")?.ownerId, "user-a");
+  assert.equal(getRunForOwner("legacy-recovery-run", "user-a")?.workflowId, first.id);
+  assert.equal(getRunForOwner("legacy-recovery-run", "user-b"), undefined);
+  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM ownership_recovery_audit WHERE operation_key=?").get(preview.operationKey) as { count: number }).count, 1);
+  assert.equal((db.prepare("SELECT workflow_ids_json, previous_owners_json, reason FROM ownership_recovery_audit WHERE operation_key=?").get(preview.operationKey) as { workflow_ids_json: string; previous_owners_json: string; reason: string }).workflow_ids_json.includes("Legacy"), false);
+  assert.deepEqual(reassignLegacyWorkflows(preview, true), { changed: false, alreadyApplied: true });
+  assert.throws(() => previewLegacyRecovery("operator@example.test", [first.id, owned.id], "a@example.test", "Support ticket REC-2"), /Owned workflows/);
+  assert.equal(getWorkflowForOwner(owned.id, "user-b")?.ownerId, "user-b");
 });
 
 test("seed is idempotent", () => {

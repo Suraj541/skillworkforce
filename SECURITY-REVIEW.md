@@ -31,6 +31,10 @@ Resource limits are bounded for graph and field sizes, but rate limiting and exe
 
 Legacy workflows created before this change retain their data with `owner_id = NULL` and are intentionally inaccessible until an explicit claim/migration operation is designed.
 
+## Legacy ownership recovery
+
+Legacy ownership is recovered only through the operator-only `npm run ownership:recover` CLI; no authenticated user or public API can claim records. Back up `SKILLFORGE_DB_PATH` before recovery. List candidates with `npm run ownership:recover -- --list`, preview with `--operator <operator> --to-user <user-id-or-email> --reason <reason> --workflow <id> --dry-run`, then apply the exact preview inputs with `--confirm`. The command rejects duplicate, missing, nonexistent, or already-owned IDs and nonexistent destination users. Reassignment is transactional, rechecks ownerless state immediately before updates, preserves runs/logs, and records the operator, IDs, previous ownership, destination, reason, timestamp, and an idempotency key in `ownership_recovery_audit`. Historical ownership that cannot be established remains an explicit administrative decision rather than an inferred assignment.
+
 ## Dependency advisory remediation
 
 Before remediation, `next@15.5.28` installed `postcss@8.4.31` through `next -> postcss`. `npm audit --omit=dev` reported:

@@ -19,11 +19,15 @@ Unit/integration checks establish service and persistence behavior; they do not 
 
 ## Current status
 
-Baseline checks were unavailable before the empty repository received a package manifest. Current checks: lint passed, typecheck passed, nine behavioral regression tests passed, production build passed, database init/seed passed, successful ZIP integrity check passed, security-gate blocking passed, seed idempotency passed, authenticated owner/CSRF route behavior passed, legacy migration preservation passed, browser login/workflow execution passed, and both production dependency audits passed with zero vulnerabilities after the PostCSS override.
+Baseline checks were unavailable before the empty repository received a package manifest. Current checks: lint passed, typecheck passed, ten behavioral regression tests passed, production build passed, database init/seed passed, successful ZIP integrity check passed, security-gate blocking passed, seed idempotency passed, authenticated owner/CSRF route behavior passed, legacy migration preservation passed, browser login/workflow execution passed, legacy ownership recovery preview/transaction/audit behavior passed, and both production dependency audits passed with zero vulnerabilities after the PostCSS override.
 
 ## Migration behavior
 
 Database initialization creates `schema_migrations`, `users`, and `sessions`, then adds `workflows.owner_id` if it is missing. Existing workflows and runs are preserved. Legacy workflows receive `NULL` ownership and are not returned to authenticated users; no arbitrary account is assigned.
+
+## Legacy ownership recovery
+
+`npm run ownership:recover -- --list` reports only workflow IDs with `owner_id IS NULL`. A dry run validates explicit IDs and the existing destination user without changing rows. Confirmed reassignment uses `BEGIN IMMEDIATE`, rejects ownership changes or mixed owned/ownerless selections, preserves runs through the parent workflow, records an audit event, and is idempotent for the same operation key. No recovery route exists for unauthenticated or ordinary authenticated callers.
 
 ## Dependency remediation
 
