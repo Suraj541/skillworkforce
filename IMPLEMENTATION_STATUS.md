@@ -16,3 +16,5 @@
 - End-to-end workflow path with blocking gate: implemented, partially verified
 - 26 SOP-derived seed skills: implemented (file + DB seed), partially verified
 - 10 engineering skills + rules: implemented, verified (filesystem evidence)
+- Endpoint automation for all registered routes: not implemented
+- Browser e2e journey verification: not implemented

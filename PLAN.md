@@ -6,5 +6,5 @@
 - [x] Add required app shell routes and section pages.
 - [x] Add engineering skills and engineering standards rule file.
 - [x] Add SOP seed pack files and idempotent DB seeding.
-- [ ] Add comprehensive endpoint automation coverage for every route (blocked: not fully implemented in this iteration).
-- [ ] Add browser e2e verification (blocked if Playwright/browser not available in environment).
+- [ ] Add comprehensive endpoint automation coverage for every route (not implemented in this iteration).
+- [ ] Add browser e2e verification (not implemented in this iteration).
